@@ -1,0 +1,496 @@
+{
+  "name": "VCALOC - FullTrack → Asaas (Anti-Duplicado)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "custom",
+              "cronExpression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "751f1af9-8dbd-4bf6-8573-787a7ef54ed5",
+      "name": "⏰ Verificar Novos Clientes",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -3072,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 🔐 Preparar autenticação e busca VCALOC - BUSCAR MÚLTIPLOS PARA COMPARAÇÃO\nconst agora = new Date();\n\nconsole.log('🕐 Buscando últimos clientes para comparação de datas');\n\n// 🔑 Credenciais CORRETAS da API FullTrack\nconst apiKey = '0973edfb4f55e1677f6965e166f5906731cc349e';\nconst secretKey = '6365d61ade7864d6958d601d48b95d16643b728d';\nconst baseUrl = 'https://api.fulltrack.com.br/';\n\n// 📊 Query MELHORADA - BUSCAR ÚLTIMOS 50 PARA GARANTIR\nconst query = `\n  SELECT cli_id as fulltrack_id, cli_nome as nome, cli_email as email, \ncli_cpf_cnpj as documento, cli_telefone as telefone,\ncli_endereco as endereco, cli_numero as numero, cli_bairro as bairro, \ncli_cidade as cidade, cli_estado as estado, cli_cep as cep, \ncli_tipo_pessoa as tipo_pessoa, cli_created_at as criado_em\nFROM cliente \nWHERE cli_status = 1 \nAND cli_nome IS NOT NULL \nAND cli_nome != ''\nORDER BY cli_created_at DESC\nLIMIT 50\n`;\n\nconsole.log('📊 Query preparada para buscar últimos 50 clientes');\n\nreturn [{\n  json: {\n    api_key: apiKey,\n    secret_key: secretKey,\n    base_url: baseUrl,\n    query_sql: query.replace(/\\s+/g, ' ').trim(),\n    timestamp: agora.toISOString(),\n    operacao: 'comparacao_datas'\n  }\n}];"
+      },
+      "id": "71fdd43a-6688-4d9f-bf94-6fc556b38281",
+      "name": "🔐 Preparar Auth + Busca",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -2848,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://ws.fulltrack2.com/clients/all",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "secretKey",
+              "value": "={{ $json.secret_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "207f8b8b-b778-434b-9c3e-3d9f1bdb8a71",
+      "name": "🔍 Buscar Clientes FullTrack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -2624,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 🔍 Processar resposta da API FullTrack - COMPARAÇÃO PRECISA DATA+HORA\nconst response = $input.first().json;\n\nconsole.log('📡 Processando resposta da API FullTrack');\n\nif (!response || !response.status || !response.data) {\n  console.log('❌ Nenhum cliente encontrado ou erro na API');\n  return [{ json: { clientes: [], total: 0, erro: 'Sem dados' } }];\n}\n\nconst clientes = response.data;\nconsole.log(`👥 ${clientes.length} cliente(s) retornado(s) pela API`);\n\nif (clientes.length === 0) {\n  console.log('✅ Nenhum cliente encontrado na busca');\n  return [{ json: { clientes: [], total: 0, status: 'vazio' } }];\n}\n\n// 🎯 ENCONTRAR O ÚLTIMO CLIENTE POR COMPARAÇÃO PRECISA DE DATA+HORA\nlet ultimoCliente = clientes[0];\nlet timestampUltimoCliente = new Date(ultimoCliente.ras_cli_data_cadastro || '1970-01-01T00:00:00').getTime();\n\nconsole.log(`🔍 Analisando ${clientes.length} cliente(s) por timestamp completo (data+hora+minuto+segundo):`);\n\nclientes.forEach((cliente, index) => {\n  const dataOriginal = cliente.ras_cli_data_cadastro || '1970-01-01T00:00:00';\n  const timestampCliente = new Date(dataOriginal).getTime();\n  \n  // 📅 Converter timestamp para data legível\n  const dataFormatada = new Date(timestampCliente).toLocaleString('pt-BR', {\n    timeZone: 'America/Sao_Paulo',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    second: '2-digit'\n  });\n  \n  console.log(`${index + 1}. ${cliente.ras_cli_desc}`);\n  console.log(`   📅 Data original: ${dataOriginal}`);\n  console.log(`   🕐 Timestamp: ${timestampCliente}`);\n  console.log(`   📋 Formatado: ${dataFormatada}`);\n  \n  // ⏰ Comparar timestamps (milissegundos) para precisão total\n  if (timestampCliente > timestampUltimoCliente) {\n    console.log(`   🏆 NOVO ÚLTIMO CLIENTE (timestamp maior)!`);\n    ultimoCliente = cliente;\n    timestampUltimoCliente = timestampCliente;\n  } else {\n    const diferenca = timestampUltimoCliente - timestampCliente;\n    console.log(`   📊 Diferença: ${diferenca}ms (${Math.round(diferenca/1000)}s atrás)`);\n  }\n  console.log(''); // Linha em branco para separar\n});\n\n// 🏆 RESULTADO FINAL\nconst dataFinalFormatada = new Date(timestampUltimoCliente).toLocaleString('pt-BR', {\n  timeZone: 'America/Sao_Paulo',\n  year: 'numeric',\n  month: '2-digit', \n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit'\n});\n\nconsole.log(`🎯 CLIENTE MAIS RECENTE POR TIMESTAMP: ${ultimoCliente.ras_cli_desc}`);\nconsole.log(`📅 Data/Hora de cadastro: ${ultimoCliente.ras_cli_data_cadastro}`);\nconsole.log(`🕐 Timestamp: ${timestampUltimoCliente}`);\nconsole.log(`📋 Formatado BR: ${dataFinalFormatada}`);\n\n// 🔄 Processar dados do último cliente\nconst clienteProcessado = {\n  fulltrack_id: ultimoCliente.ras_cli_id,\n  nome: ultimoCliente.ras_cli_desc?.trim(),\n  email: ultimoCliente.ras_cli_email?.trim() || null,\n  documento: ultimoCliente.ras_cli_cnpj?.replace(/\\D/g, ''),\n  telefone: ultimoCliente.ras_cli_telefone?.replace(/\\D/g, '') || ultimoCliente.ras_cli_celular?.replace(/\\D/g, ''),\n  endereco: ultimoCliente.ras_cli_endereco?.trim(),\n  numero: ultimoCliente.ras_cli_numero || 'S/N',\n  bairro: ultimoCliente.ras_cli_bairro?.trim(),\n  cidade: ultimoCliente.ras_cli_cidade?.trim(),\n  estado: ultimoCliente.ras_cli_uf?.trim(),\n  cep: ultimoCliente.ras_cli_cep?.replace(/\\D/g, ''),\n  tipo_pessoa: ultimoCliente.ras_cli_tipo,\n  criado_em: ultimoCliente.ras_cli_data_cadastro,\n  timestamp_cadastro: timestampUltimoCliente,\n  data_formatada_br: dataFinalFormatada,\n  processado_em: new Date().toISOString(),\n  ultimo_por_timestamp: true\n};\n\nconsole.log('✅ Cliente com TIMESTAMP mais recente processado');\nconsole.log(`👤 Nome: ${clienteProcessado.nome}`);\nconsole.log(`⏰ Cadastrado: ${clienteProcessado.data_formatada_br}`);\n\n// 🎯 Retornar o cliente mais recente por timestamp preciso\nreturn [{ json: clienteProcessado }];"
+      },
+      "id": "0c8ad478-7093-405f-ad1b-e846ff69b3f4",
+      "name": "🆕 Filtrar Clientes Novos",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -2400,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://ws.fulltrack2.com/contacts/single/id/{{$json.fulltrack_id}}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $('🔐 Preparar Auth + Busca').item.json.api_key }}"
+            },
+            {
+              "name": "secretKey",
+              "value": "={{ $('🔐 Preparar Auth + Busca').item.json.secret_key }}"
+            },
+            {
+              "name": "clientId",
+              "value": "={{$json.fulltrack_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "814f3f13-bfee-4bbe-ba99-d37592645f0e",
+      "name": "📱 Buscar Contatos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -2192,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 🔄 Processar cliente VCALOC + contatos\nconst dadosFiltrados = $('🆕 Filtrar Clientes Novos').first().json;\nconst contatosResponse = items[0].json;\n\nconsole.log('👤 Processando cliente VCALOC:', dadosFiltrados.nome);\nconsole.log('📱 Contatos recebidos:', contatosResponse);\n\nlet contatoPrincipal = null;\nlet telefoneContato = null;\nlet emailContato = null;\n\n// Verificar se tem dados de contatos\nif (contatosResponse && contatosResponse.status && contatosResponse.data) {\n  // Procurar contato master primeiro\n  contatoPrincipal = contatosResponse.data.find(contato => \n    contato.ras_ccn_email_master === '1' || contato.ras_ccn_email_master === 1\n  );\n  \n  // Se não tiver master, pegar o primeiro\n  if (!contatoPrincipal && contatosResponse.data.length > 0) {\n    contatoPrincipal = contatosResponse.data[0];\n  }\n  \n  if (contatoPrincipal) {\n    telefoneContato = contatoPrincipal.ras_ccn_telefone || contatoPrincipal.ras_ccn_num_telefone;\n    emailContato = contatoPrincipal.ras_ccn_email;\n  }\n}\n\n// Se não encontrou contato, usar dados do próprio cliente\nif (!telefoneContato) {\n  telefoneContato = dadosFiltrados.telefone;\n}\nif (!emailContato) {\n  emailContato = dadosFiltrados.email;\n}\n\n// 📱 Formatar telefone brasileiro\nfunction formatarTelefone(telefone) {\n  if (!telefone) return null;\n  const limpo = telefone.replace(/\\D/g, '');\n  \n  // Celular com DDD (11 dígitos)\n  if (limpo.length === 11) return `55${limpo}`;\n  \n  // Fixo com DDD (10 dígitos) - adicionar 9\n  if (limpo.length === 10) {\n    const ddd = limpo.substring(0, 2);\n    const numero = limpo.substring(2);\n    return `55${ddd}9${numero}`;\n  }\n  \n  // Já formatado com país\n  if (limpo.length === 13 && limpo.startsWith('55')) {\n    return limpo;\n  }\n  \n  return limpo.length >= 10 ? limpo : null;\n}\n\nlet telefoneFormatado = formatarTelefone(telefoneContato);\n\n// Gerar email se não existir\nconst emailFinal = emailContato || `cliente${dadosFiltrados.fulltrack_id}@vcaloc.com.br`;\n\n// 🛡️ VALIDAÇÕES PARA PRODUÇÃO\nif (!dadosFiltrados.nome) {\n  console.log('❌ Cliente sem nome:', dadosFiltrados);\n  return [{ json: { error: 'Nome obrigatório', skip: true } }];\n}\n\nif (!telefoneFormatado) {\n  console.log('❌ Cliente sem telefone válido:', dadosFiltrados);\n  return [{ json: { error: 'Telefone obrigatório', skip: true } }];\n}\n\n// 🔑 Gerar senha temporária\nfunction gerarSenha() {\n  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';\n  let senha = '';\n  for (let i = 0; i < 8; i++) {\n    senha += chars.charAt(Math.floor(Math.random() * chars.length));\n  }\n  return senha;\n}\n\nconst senhaTemp = gerarSenha();\n\nconsole.log('✅ Cliente VCALOC processado:', {\n  nome: dadosFiltrados.nome,\n  telefone: telefoneFormatado,\n  email: emailFinal,\n  fulltrack_id: dadosFiltrados.fulltrack_id\n});\n\nreturn [{\n  json: {\n    // Dados para Asaas\n    asaas_data: {\n      name: dadosFiltrados.nome,\n      email: emailFinal,\n      mobilePhone: telefoneFormatado,\n      cpfCnpj: dadosFiltrados.documento || '',\n      postalCode: dadosFiltrados.cep?.replace(/\\D/g, '') || '',\n      address: dadosFiltrados.endereco || '',\n      addressNumber: dadosFiltrados.numero || 'S/N',\n      province: dadosFiltrados.bairro || '',\n      cityName: dadosFiltrados.cidade || '',\n      state: dadosFiltrados.estado || '',\n      externalReference: `vcaloc_${dadosFiltrados.fulltrack_id}`\n    },\n    \n    // Dados para WhatsApp\n    whatsapp_data: {\n      nome: dadosFiltrados.nome,\n      telefone: telefoneFormatado,\n      email: emailFinal,\n      senha_temporaria: senhaTemp,\n      documento: dadosFiltrados.documento || 'N/A',\n      endereco_completo: dadosFiltrados.endereco ? \n        `${dadosFiltrados.endereco}, ${dadosFiltrados.numero || 'S/N'}, ${dadosFiltrados.bairro || ''} - ${dadosFiltrados.cidade || ''}/${dadosFiltrados.estado || ''}` :\n        'Endereço não informado',\n      fulltrack_id: dadosFiltrados.fulltrack_id,\n      tipo_pessoa: dadosFiltrados.tipo_pessoa === 'F' ? 'Física' : 'Jurídica'\n    },\n    \n    // Dados originais\n    cliente_fulltrack: dadosFiltrados,\n    contato_principal: contatoPrincipal,\n    \n    // Timestamp de processamento\n    processado_em: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "91879195-a0b5-4e71-89b4-d7bad2a42edc",
+      "name": "🔄 Processar Dados VCALOC",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1968,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.error}}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "8d4c983a-2f9c-4dd4-9f0d-092af1c36b21",
+      "name": "✅ Validar Dados",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1744,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.asaas.com/api/v3/customers?cpfCnpj={{$json.asaas_data.cpfCnpj}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "$aact_prod_000MzkwODA2MWY2OGM3MWRlMDU2NWM3MzJlNzZmNGZhZGY6OjQ1MTFiMjU2LWY5ZTItNDAxNC1hNzQ4LTZiNWE3MTBmMmQ0ODo6JGFhY2hfN2QwN2MwMzAtYWYwMy00MGU3LWFiYzAtZTNjMTc2M2Y1ZGFh"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a75dcc0b-1cc4-470e-9ef9-ae0156d1e078",
+      "name": "🔍 Verificar CPF Duplicado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -1520,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const dadosCliente = $('🔄 Processar Dados VCALOC').first().json;\nconst verificacaoAsaas = items[0].json;\n\nconst clienteExistente = verificacaoAsaas?.data?.[0];\nconst permitirCadastro = !clienteExistente;\n\nif (!permitirCadastro) {\n  const mensagemDuplicado = `⚠️ *VCALOC - Cliente já cadastrado*\\n\\nOlá, ${dadosCliente.whatsapp_data.nome}! 👋\\n\\n❌ Você já possui cadastro:\\n\\n👤 *Dados existentes:*\\n• 📄 CPF/CNPJ: ${clienteExistente.cpfCnpj}\\n• 👥 Nome: ${clienteExistente.name}\\n• 📧 Email: ${clienteExistente.email}\\n\\n📱 *Para acessar:*\\n• 🔗 App: https://play.google.com/store/apps/details?id=com.fulltrack.fmobile\\n• 🌐 Portal: https://vcaloc.com.br\\n\\n📞 *Suporte:*\\n• 📱 WhatsApp: (77) 9 8813-4136\\n• 📧 Email: suportevca@gmail.com\\n\\n*Equipe VCALOC* 🚗💙`;\n  \n  return [{\n    json: {\n      ...dadosCliente,\n      cliente_duplicado: true,\n      cliente_existente: clienteExistente,\n      mensagem_duplicado: mensagemDuplicado,\n      telefone_destino: dadosCliente.whatsapp_data.telefone,\n      permitir_cadastro: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...dadosCliente,\n    cliente_duplicado: false,\n    permitir_cadastro: true\n  }\n}];"
+      },
+      "id": "26348935-b849-4088-b1a8-04c4ddb1fcf9",
+      "name": "🔄 Processar Verificação CPF",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1312,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.permitir_cadastro}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "e0378fff-aeea-4409-94d1-7890f3567a17",
+      "name": "❓ Permitir Cadastro?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1088,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.asaas.com/api/v3/customers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "$aact_prod_000MzkwODA2MWY2OGM3MWRlMDU2NWM3MzJlNzZmNGZhZGY6OjQ1MTFiMjU2LWY5ZTItNDAxNC1hNzQ4LTZiNWE3MTBmMmQ0ODo6JGFhY2hfN2QwN2MwMzAtYWYwMy00MGU3LWFiYzAtZTNjMTc2M2Y1ZGFh"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.asaas_data.name }}\",\n  \"email\": \"{{ $json.asaas_data.email }}\",\n  \"mobilePhone\": \"{{ $json.asaas_data.mobilePhone }}\",\n  \"cpfCnpj\": \"{{ $json.asaas_data.cpfCnpj }}\",\n  \"postalCode\": \"{{ $json.asaas_data.postalCode }}\",\n  \"address\": \"{{ $json.asaas_data.address }}\",\n  \"addressNumber\": \"{{ $json.asaas_data.addressNumber }}\",\n  \"province\": \"{{ $json.asaas_data.province }}\",\n  \"cityName\": \"{{ $json.asaas_data.cityName }}\",\n  \"state\": \"{{ $json.asaas_data.state }}\",\n  \"externalReference\": \"{{ $json.asaas_data.externalReference }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "2e9aae82-f6f5-456f-905f-d3d4af426ee5",
+      "name": "👤 Criar Cliente Asaas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -864,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 🎯 Processar resposta do Asaas e preparar dados completos\nconst dadosCliente = $('🔄 Processar Dados VCALOC').first().json;\nconst respostaAsaas = items[0].json;\n\nconsole.log('✅ Cliente criado no Asaas:', respostaAsaas);\n\n// 🔑 GERAR LOGIN E SENHA - PADRÃO VCALOC\nconst nomeCompleto = dadosCliente.whatsapp_data.nome;\nconst telefoneCompleto = dadosCliente.whatsapp_data.telefone;\n\n// 📱 LOGIN = TELEFONE (apenas números brasileiros - sem código do país)\nconst login = telefoneCompleto.replace(/\\D/g, '').replace(/^55/, ''); // Remove 55 do início\n\n// 🔐 SENHA = ÚLTIMO NOME + ANO\nconst anoAtual = new Date().getFullYear();\nconst partesNome = nomeCompleto.trim().split(' ');\nconst ultimoNome = partesNome[partesNome.length - 1];\n\n// Formatar último nome (minúsculo, sem acentos)\nconst ultimoNomeLimpo = ultimoNome\n  .toLowerCase()\n  .normalize('NFD')\n  .replace(/[\\u0300-\\u036f]/g, '') // Remove acentos\n  .replace(/[^a-z]/g, ''); // Remove caracteres especiais\n\nconst senha = `${ultimoNomeLimpo}${anoAtual}`;\n\nconsole.log('🔑 Credenciais VCALOC:', { login, senha, nome: nomeCompleto });\n\n// 📱 Mensagem de boas-vindas ATUALIZADA\nconst mensagemBoasVindas = `🎉 *Bem-vindo à VCALOC!*\n\nOlá, ${dadosCliente.whatsapp_data.nome}! 👋\n\n✅ *Cadastro realizado com sucesso!*\n\n🔑 *Seus dados de acesso:*\n• 👤 Login: ${login}\n• 🔐 Senha: ${senha}\n• 📧 Email: ${dadosCliente.whatsapp_data.email}\n\n📱 *Baixe nosso app:*\n• 🍎 iOS: https://apps.apple.com/br/app/f-mobile/id1536782679\n• 🔗 Android: https://play.google.com/store/apps/details?id=com.fulltrack.fmobile\n\n🚗 *Próximos passos:*\n1. Faça login com seus dados\n2. Altere sua senha\n3. Complete seu perfil\n4. Explore nossos serviços\n\n📞 *Suporte 24h:*\n• 📱 WhatsApp: (77) 9 8813-4136\n• 📧 Email: suportevca@gmail.com\n\n*Equipe VCALOC RASTREAMENTO VEICULAR* 🚗💙\n_Rastreamento e segurança para seu veículo!_`;\n\nreturn [{\n  json: {\n    ...dadosCliente,\n    cliente_asaas: respostaAsaas,\n    credenciais_vcaloc: {\n      login: login,\n      senha: senha,\n      cliente_id: respostaAsaas.id\n    },\n    mensagem_boas_vindas: mensagemBoasVindas,\n    telefone_destino: dadosCliente.whatsapp_data.telefone,\n    sucesso: true,\n    processado_em: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "20811143-c8b7-4195-8aa5-57f6cec325cd",
+      "name": "🎉 Processar Sucesso Asaas",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-v237.vcatech.online/message/sendText/vcatech",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "4E8D0E4CE26A-4630-BBB8-D16FD98F54D9"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{$json.telefone_destino}}"
+            },
+            {
+              "name": "text",
+              "value": "={{$json.mensagem_boas_vindas}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e5d92b3d-4410-4eba-b572-74bf53dcd635",
+      "name": "🎉 Enviar Boas-Vindas WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -416,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-v237.vcatech.online/message/sendText/vcatech",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "4E8D0E4CE26A-4630-BBB8-D16FD98F54D9"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{$json.telefone_destino}}"
+            },
+            {
+              "name": "text",
+              "value": "={{$json.mensagem_duplicado}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "15b2fd9c-7633-4b70-a261-14678ceaec0d",
+      "name": "⚠️ Informar Cliente Duplicado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -864,
+        128
+      ]
+    }
+  ],
+  "pinData": {
+    "⏰ Verificar Novos Clientes": [
+      {
+        "json": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "⏰ Verificar Novos Clientes": {
+      "main": [
+        [
+          {
+            "node": "🔐 Preparar Auth + Busca",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Preparar Auth + Busca": {
+      "main": [
+        [
+          {
+            "node": "🔍 Buscar Clientes FullTrack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Buscar Clientes FullTrack": {
+      "main": [
+        [
+          {
+            "node": "🆕 Filtrar Clientes Novos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🆕 Filtrar Clientes Novos": {
+      "main": [
+        [
+          {
+            "node": "📱 Buscar Contatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Buscar Contatos": {
+      "main": [
+        [
+          {
+            "node": "🔄 Processar Dados VCALOC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Processar Dados VCALOC": {
+      "main": [
+        [
+          {
+            "node": "✅ Validar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validar Dados": {
+      "main": [
+        [
+          {
+            "node": "🔍 Verificar CPF Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Verificar CPF Duplicado": {
+      "main": [
+        [
+          {
+            "node": "🔄 Processar Verificação CPF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Processar Verificação CPF": {
+      "main": [
+        [
+          {
+            "node": "❓ Permitir Cadastro?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Permitir Cadastro?": {
+      "main": [
+        [
+          {
+            "node": "👤 Criar Cliente Asaas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Informar Cliente Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👤 Criar Cliente Asaas": {
+      "main": [
+        [
+          {
+            "node": "🎉 Processar Sucesso Asaas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎉 Processar Sucesso Asaas": {
+      "main": [
+        [
+          {
+            "node": "🎉 Enviar Boas-Vindas WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "timezone": "America/Sao_Paulo",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": -1,
+    "availableInMCP": false
+  },
+  "versionId": "f9d92a5a-3e6f-47e3-8418-c9951d0340b0",
+  "meta": {
+    "instanceId": "d6040553458316780416279b9f0c0383476bcf12a6961b0c2ab442197fe10f53"
+  },
+  "id": "pDR0Dju9DzWVCSsi",
+  "tags": []
+}
